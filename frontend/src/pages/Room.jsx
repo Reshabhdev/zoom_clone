@@ -3,13 +3,31 @@ import { useParams, useNavigate, useSearchParams } from "react-router-dom";
 import { useUser } from "@clerk/clerk-react";
 
 // --- REMOTE VIDEO COMPONENT ---
-const RemoteVideo = ({ stream, peerName }) => {
+const RemoteVideo = ({ stream, peerName, isPinned, onPin }) => {
     const videoRef = useRef(null);
     useEffect(() => {
         if (videoRef.current && stream) videoRef.current.srcObject = stream;
     }, [stream]);
     return (
-        <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #333' }}>
+        <div
+            onClick={onPin}
+            style={{
+                backgroundColor: '#222',
+                borderRadius: '12px',
+                overflow: 'hidden',
+                position: 'relative',
+                width: '100%',
+                maxWidth: isPinned ? '100%' : '320px',
+                flex: isPinned ? '1 1 100%' : '0 1 auto',
+                aspectRatio: '16/9',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: isPinned ? '3px solid #0b5cff' : '1px solid #333',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: isPinned ? '0 10px 30px rgba(11, 92, 255, 0.3)' : '0 4px 12px rgba(0,0,0,0.2)'
+            }}>
             <video playsInline autoPlay ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
                 {peerName}
@@ -39,6 +57,7 @@ export default function Room() {
 
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const screenStreamRef = useRef(null);
+    const [pinnedPeerId, setPinnedPeerId] = useState(null);
 
     // --- Chat States ---
     const [isChatOpen, setIsChatOpen] = useState(false);
@@ -229,6 +248,7 @@ export default function Room() {
                 if (userVideoRef.current) userVideoRef.current.srcObject = screenStream;
                 screenStreamRef.current = screenStream;
                 setIsScreenSharing(true);
+                setPinnedPeerId("local");
 
                 screenVideoTrack.onended = () => { stopScreenSharing(); };
             } catch (error) {
@@ -253,6 +273,7 @@ export default function Room() {
                 screenStreamRef.current = null;
             }
             setIsScreenSharing(false);
+            if (pinnedPeerId === "local") setPinnedPeerId(null);
         }
     };
 
@@ -374,9 +395,24 @@ export default function Room() {
             <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
                 {/* Video Grid Area */}
-                <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
+                <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', alignContent: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
 
-                    <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
+                    <div
+                        onClick={() => setPinnedPeerId(pinnedPeerId === "local" ? null : "local")}
+                        style={{
+                            backgroundColor: '#222',
+                            borderRadius: '12px',
+                            overflow: 'hidden',
+                            position: 'relative',
+                            width: '100%',
+                            maxWidth: pinnedPeerId === "local" ? '100%' : '320px',
+                            flex: pinnedPeerId === "local" ? '1 1 100%' : '0 1 auto',
+                            aspectRatio: '16/9',
+                            border: pinnedPeerId === "local" ? '3px solid #0b5cff' : '1px solid #333',
+                            cursor: 'pointer',
+                            transition: 'all 0.3s ease',
+                            boxShadow: pinnedPeerId === "local" ? '0 10px 30px rgba(11, 92, 255, 0.3)' : '0 4px 12px rgba(0,0,0,0.2)'
+                        }}>
                         <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }} />
                         <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
                             {myName} {isScreenSharing ? "(Presenting)" : ""} {isAudioEnabled ? "" : "🔇"}
@@ -384,7 +420,13 @@ export default function Room() {
                     </div>
 
                     {remotePeers.map((peer) => (
-                        <RemoteVideo key={peer.peerId} stream={peer.stream} peerName={peer.peerName} />
+                        <RemoteVideo
+                            key={peer.peerId}
+                            stream={peer.stream}
+                            peerName={peer.peerName}
+                            isPinned={pinnedPeerId === peer.peerId}
+                            onPin={() => setPinnedPeerId(pinnedPeerId === peer.peerId ? null : peer.peerId)}
+                        />
                     ))}
                 </div>
 
@@ -436,46 +478,46 @@ export default function Room() {
             </div>
 
             {/* Bottom Control Bar */}
-            <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
+            <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
 
-                <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
-                    <div style={{ fontSize: '24px', backgroundColor: isAudioEnabled ? '#333' : 'rgba(255, 77, 79, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '70px', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '24px', backgroundColor: isAudioEnabled ? '#333' : '#ff4d4f', color: isAudioEnabled ? 'inherit' : 'white', padding: '16px', borderRadius: '50%', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', transition: 'background-color 0.3s' }}>
                         {isAudioEnabled ? "🎤" : "🔇"}
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isAudioEnabled ? "Mute" : "Unmute"}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{isAudioEnabled ? "Mute" : "Unmute"}</span>
                 </button>
 
-                <button onClick={toggleVideo} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isVideoEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
-                    <div style={{ fontSize: '24px', backgroundColor: isVideoEnabled ? '#333' : 'rgba(255, 77, 79, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={toggleVideo} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: isVideoEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '70px', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '24px', backgroundColor: isVideoEnabled ? '#333' : '#ff4d4f', color: isVideoEnabled ? 'inherit' : 'white', padding: '16px', borderRadius: '50%', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', transition: 'background-color 0.3s' }}>
                         {isVideoEnabled ? "📷" : "🚫"}
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isVideoEnabled ? "Stop" : "Start"}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{isVideoEnabled ? "Stop" : "Start"}</span>
                 </button>
 
-                <button onClick={toggleScreenShare} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isScreenSharing ? '#4ade80' : 'white', cursor: 'pointer', width: '60px' }}>
-                    <div style={{ fontSize: '24px', backgroundColor: isScreenSharing ? 'rgba(74, 222, 128, 0.1)' : '#333', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={toggleScreenShare} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: isScreenSharing ? '#4ade80' : 'white', cursor: 'pointer', width: '70px', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '24px', backgroundColor: isScreenSharing ? 'rgba(74, 222, 128, 0.2)' : '#333', padding: '16px', borderRadius: '50%', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', transition: 'background-color 0.3s' }}>
                         💻
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isScreenSharing ? "Sharing" : "Share"}</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>{isScreenSharing ? "Sharing" : "Share"}</span>
                 </button>
 
-                <button onClick={() => setIsChatOpen(!isChatOpen)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isChatOpen ? '#0b5cff' : 'white', cursor: 'pointer', width: '60px', position: 'relative' }}>
-                    <div style={{ fontSize: '24px', backgroundColor: isChatOpen ? 'rgba(11, 92, 255, 0.1)' : '#333', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={() => setIsChatOpen(!isChatOpen)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: isChatOpen ? '#0b5cff' : 'white', cursor: 'pointer', width: '70px', position: 'relative', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '24px', backgroundColor: isChatOpen ? 'rgba(11, 92, 255, 0.2)' : '#333', padding: '16px', borderRadius: '50%', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', transition: 'background-color 0.3s' }}>
                         💬
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: '500' }}>Chat</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>Chat</span>
                 </button>
 
-                <button onClick={() => setShowShareModal(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', width: '60px' }}>
-                    <div style={{ fontSize: '24px', backgroundColor: 'rgba(74, 222, 128, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <button onClick={() => setShowShareModal(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', width: '70px', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.1)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '24px', backgroundColor: 'rgba(74, 222, 128, 0.2)', padding: '16px', borderRadius: '50%', width: '56px', height: '56px', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', transition: 'background-color 0.3s' }}>
                         👥
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: '500' }}>Invite</span>
+                    <span style={{ fontSize: '13px', fontWeight: '600' }}>Invite</span>
                 </button>
 
-                <button onClick={leaveRoom} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#ff4d4f', cursor: 'pointer', marginLeft: 'auto' }}>
-                    <div style={{ fontSize: '16px', backgroundColor: '#ff4d4f', color: 'white', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50px' }}>
-                        End
+                <button onClick={leaveRoom} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px', background: 'none', border: 'none', color: 'white', cursor: 'pointer', marginLeft: 'auto', transition: 'transform 0.2s' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.05)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+                    <div style={{ fontSize: '16px', backgroundColor: '#dc3545', color: 'white', padding: '14px 28px', borderRadius: '12px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '56px', boxShadow: '0 4px 15px rgba(220, 53, 69, 0.4)', transition: 'background-color 0.3s' }}>
+                        End Call
                     </div>
                 </button>
 
