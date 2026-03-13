@@ -109,6 +109,21 @@ export default function Room() {
         }
     }, [messages, isChatOpen]);
 
+    // --- NEW: History Trap to Prevent Accidental "Back" Navigations ---
+    useEffect(() => {
+        // Push a state so there's somewhere for the back button to "land" without leaving
+        window.history.pushState(null, null, window.location.href);
+
+        const handlePopState = (e) => {
+            // Push it right back again so they stay trapped on this page
+            window.history.pushState(null, null, window.location.href);
+            alert("Please use the 'End Call' button to leave the meeting.");
+        };
+
+        window.addEventListener("popstate", handlePopState);
+        return () => window.removeEventListener("popstate", handlePopState);
+    }, []);
+
     const validatePassword = async (passwordToCheck) => {
         setIsValidating(true);
         setAuthError("");
@@ -342,7 +357,7 @@ export default function Room() {
 
     if (isValidating) {
         return (
-            <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: 'white', zIndex: 9999 }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, height: '100dvh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: 'white', zIndex: 9999 }}>
                 <div style={{ fontSize: '40px', marginBottom: '20px', animation: 'spin 2s linear infinite' }}>⏳</div>
                 <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
                 <h2 style={{ fontWeight: 'normal' }}>Joining meeting...</h2>
@@ -352,7 +367,7 @@ export default function Room() {
 
     if (!isAuthorized) {
         return (
-            <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', zIndex: 9999 }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, height: '100dvh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', zIndex: 9999 }}>
                 <div style={{ backgroundColor: '#1c1c1c', padding: '3rem', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', textAlign: 'center', color: 'white', maxWidth: '400px', width: '90%' }}>
                     <h2 style={{ margin: '0 0 1rem 0' }}>🔒 Meeting Locked</h2>
                     <p style={{ color: '#ff4d4f', margin: '0 0 1.5rem 0', minHeight: '20px' }}>{authError}</p>
@@ -369,7 +384,7 @@ export default function Room() {
     const unpinnedRemotePeers = remotePeers.filter(p => p.peerId !== pinnedPeerId);
 
     return (
-        <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', backgroundColor: '#111', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, height: '100dvh', width: '100vw', backgroundColor: '#111', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
 
             {showShareModal && (
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
@@ -479,8 +494,8 @@ export default function Room() {
                 )}
             </div>
 
-            {/* --- REFINED SMALLER CONTROL BAR --- */}
-            <div style={{ backgroundColor: '#1a1a1a', padding: '10px 20px', display: 'flex', justifyContent: 'center', gap: '12px', borderTop: '1px solid #2a2a2a' }}>
+            {/* --- REFINED SMALLER CONTROL BAR WITH MOBILE SAFE-AREA PADDING --- */}
+            <div style={{ backgroundColor: '#1a1a1a', paddingTop: '10px', paddingLeft: '20px', paddingRight: '20px', paddingBottom: 'calc(10px + env(safe-area-inset-bottom))', display: 'flex', justifyContent: 'center', gap: '12px', borderTop: '1px solid #2a2a2a' }}>
 
                 <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '50px' }}>
                     <div style={{ fontSize: '18px', backgroundColor: isAudioEnabled ? '#333' : 'rgba(255, 77, 79, 0.1)', borderRadius: '50%', width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: '0.2s' }}>
