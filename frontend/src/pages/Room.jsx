@@ -24,7 +24,6 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
-    // Securely pull the user's identity from Clerk (Google Auth)
     const { user } = useUser();
     const myName = user?.fullName || user?.firstName || "Guest User";
 
@@ -37,7 +36,6 @@ export default function Room() {
     const [authError, setAuthError] = useState("");
     const [showShareModal, setShowShareModal] = useState(false);
 
-    // Screen sharing state
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const screenStreamRef = useRef(null);
 
@@ -187,11 +185,9 @@ export default function Room() {
         }
     };
 
-    // --- Mesh Network Screen Share Logic with Mobile Checking ---
     const toggleScreenShare = async () => {
         if (!isScreenSharing) {
             try {
-                // 1. Check if the browser supports screen sharing
                 if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
                     alert("Screen sharing is not supported on this browser or mobile device.");
                     return;
@@ -200,24 +196,20 @@ export default function Room() {
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenVideoTrack = screenStream.getVideoTracks()[0];
 
-                // Loop through ALL peers and swap their video track
                 Object.values(peersRef.current).forEach(pc => {
                     const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
                     if (sender) sender.replaceTrack(screenVideoTrack);
                 });
 
-                // Update local UI
                 if (userVideoRef.current) userVideoRef.current.srcObject = screenStream;
                 screenStreamRef.current = screenStream;
                 setIsScreenSharing(true);
 
-                // Listen for the native browser "Stop sharing" popup button
                 screenVideoTrack.onended = () => {
                     stopScreenSharing();
                 };
             } catch (error) {
                 console.error("Error sharing screen:", error);
-                // 2. Alert the user if they cancel or if the OS blocks the request
                 alert("Could not share screen. It may be blocked by your device.");
             }
         } else {
@@ -229,13 +221,11 @@ export default function Room() {
         if (localStream && peersRef.current) {
             const webcamTrack = localStream.getVideoTracks()[0];
 
-            // Revert track for ALL peers back to the webcam
             Object.values(peersRef.current).forEach(pc => {
                 const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
                 if (sender && webcamTrack) sender.replaceTrack(webcamTrack);
             });
 
-            // Revert local UI
             if (userVideoRef.current) userVideoRef.current.srcObject = localStream;
             if (screenStreamRef.current) {
                 screenStreamRef.current.getTracks().forEach(track => track.stop());
@@ -254,9 +244,10 @@ export default function Room() {
 
     const leaveRoom = () => navigate("/");
 
+    // --- 1. FIXED FULL-SCREEN LOADING ---
     if (isValidating) {
         return (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111', color: 'white' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: 'white', zIndex: 9999 }}>
                 <div style={{ fontSize: '40px', marginBottom: '20px', animation: 'spin 2s linear infinite' }}>⏳</div>
                 <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
                 <h2 style={{ fontWeight: 'normal' }}>Joining meeting...</h2>
@@ -265,9 +256,10 @@ export default function Room() {
         );
     }
 
+    // --- 2. FIXED FULL-SCREEN LOCK SCREEN ---
     if (!isAuthorized) {
         return (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111' }}>
+            <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', zIndex: 9999 }}>
                 <div style={{ backgroundColor: '#1c1c1c', padding: '3rem', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', textAlign: 'center', color: 'white', maxWidth: '400px', width: '90%' }}>
                     <h2 style={{ margin: '0 0 1rem 0' }}>🔒 Meeting Locked</h2>
                     <p style={{ color: '#ff4d4f', margin: '0 0 1.5rem 0', minHeight: '20px' }}>{authError}</p>
@@ -289,12 +281,13 @@ export default function Room() {
         );
     }
 
+    // --- 3. FIXED FULL-SCREEN VIDEO ROOM ---
     return (
-        <div style={{ backgroundColor: '#111', minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
+        <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', backgroundColor: '#111', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
 
             {/* Share Modal */}
             {showShareModal && (
-                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
                     <div style={{ backgroundColor: '#222', padding: '2rem', borderRadius: '12px', maxWidth: '400px', width: '90%', textAlign: 'left', border: '1px solid #333' }}>
                         <h3 style={{ marginTop: 0, borderBottom: '1px solid #444', paddingBottom: '10px', color: '#fff' }}>Meeting Information</h3>
                         <div style={{ margin: '15px 0', fontSize: '16px', color: '#ccc' }}>
@@ -312,7 +305,7 @@ export default function Room() {
                 </div>
             )}
 
-            {/* Header */}
+            {/* Header - Fixed Height */}
             <div style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1a1a1a', borderBottom: '1px solid #2a2a2a' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <button onClick={() => setShowShareModal(true)} style={{ background: 'none', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '18px', padding: '0' }} title="Meeting Info">
@@ -325,7 +318,7 @@ export default function Room() {
                 </div>
             </div>
 
-            {/* Video Grid Area */}
+            {/* Center Video Grid Area - Flex 1 allows ONLY this area to stretch and scroll */}
             <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
 
                 {/* Local Video */}
@@ -342,7 +335,7 @@ export default function Room() {
                 ))}
             </div>
 
-            {/* Control Bar */}
+            {/* Bottom Control Bar - Fixed Height */}
             <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
 
                 <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
