@@ -1,15 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
+// NEW: Import the Clerk hook to get secure user data
+import { useUser } from "@clerk/clerk-react";
 
-const RemoteVideo = ({ stream, peerId }) => {
+// --- REMOTE VIDEO COMPONENT ---
+const RemoteVideo = ({ stream, peerName }) => {
     const videoRef = useRef(null);
     useEffect(() => {
         if (videoRef.current && stream) videoRef.current.srcObject = stream;
     }, [stream]);
     return (
-        <div style={{ backgroundColor: '#333', borderRadius: '8px', overflow: 'hidden', position: 'relative', width: '300px', height: '225px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #333' }}>
             <video playsInline autoPlay ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            <p style={{ position: 'absolute', bottom: '10px', left: '10px', color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', margin: 0, padding: '5px 10px', borderRadius: '4px', fontSize: '14px' }}>Guest ({peerId.substring(0, 4)})</p>
+            <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
+                {peerName} {/* NEW: Render the actual Gmail name here */}
+            </div>
         </div>
     );
 };
@@ -20,26 +25,34 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
-    // Live Render URLs
+    // NEW: Securely pull the user's identity from Clerk (Google Auth)
+    const { user } = useUser();
+    const myName = user?.fullName || user?.firstName || "Guest User";
+
     const REST_URL = "https://zoom-clone-g1m4.onrender.com";
     const WS_URL = "wss://zoom-clone-g1m4.onrender.com";
 
-    // Authorization State
+    const [isValidating, setIsValidating] = useState(!!urlPassword);
     const [isAuthorized, setIsAuthorized] = useState(false);
     const [manualPassword, setManualPassword] = useState("");
     const [authError, setAuthError] = useState("");
+    const [showShareModal, setShowShareModal] = useState(false);
+
+    const activePassword = urlPassword || manualPassword;
 
     const clientId = useRef(Math.random().toString(36).substring(2, 10)).current;
     const userVideoRef = useRef(null);
     const wsRef = useRef(null);
     const peersRef = useRef({});
 
+    // NEW: A memory store to keep track of which ID belongs to which Gmail Name
+    const peerNamesRef = useRef({});
+
     const [localStream, setLocalStream] = useState(null);
     const [remotePeers, setRemotePeers] = useState([]);
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
 
-    // --- 1. AUTHORIZATION LOGIC ---
     useEffect(() => {
         if (urlPassword) {
             validatePassword(urlPassword);
@@ -47,25 +60,27 @@ export default function Room() {
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const validatePassword = async (passwordToCheck) => {
+        setIsValidating(true);
+        setAuthError("");
         try {
             const response = await fetch(`${REST_URL}/validate-room`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ room_id: id, password: passwordToCheck })
             });
-
             if (response.ok) {
                 setIsAuthorized(true);
-                startMeeting(); // Start WebRTC only after auth!
+                startMeeting();
             } else {
                 setAuthError("Invalid Room Password");
             }
         } catch (error) {
             setAuthError("Could not connect to server");
+        } finally {
+            setIsValidating(false);
         }
     };
 
-    // --- 2. WEBRTC MESH LOGIC (Runs if authorized) ---
     const startMeeting = async () => {
         let stream;
         try {
@@ -73,28 +88,38 @@ export default function Room() {
             setLocalStream(stream);
             if (userVideoRef.current) userVideoRef.current.srcObject = stream;
 
-            // Connect to the Live WebSocket server
             const ws = new WebSocket(`${WS_URL}/ws/${id}/${clientId}`);
             wsRef.current = ws;
 
             ws.onmessage = async (event) => {
                 const message = JSON.parse(event.data);
+
                 if (message.type === "all-users") {
                     message.users.forEach(async (peerId) => {
                         const pc = createPeerConnection(peerId, stream, ws);
                         const offer = await pc.createOffer();
                         await pc.setLocalDescription(offer);
-                        ws.send(JSON.stringify({ type: "offer", offer, target_id: peerId, sender_id: clientId }));
+                        // NEW: Piggyback our Gmail name onto the Offer
+                        ws.send(JSON.stringify({ type: "offer", offer, target_id: peerId, sender_id: clientId, sender_name: myName }));
                     });
                 }
                 else if (message.type === "offer") {
+                    // NEW: We received an offer! Save their real name.
+                    peerNamesRef.current[message.sender_id] = message.sender_name || "Guest";
+                    updatePeerNameState(message.sender_id, message.sender_name);
+
                     const pc = createPeerConnection(message.sender_id, stream, ws);
                     await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    ws.send(JSON.stringify({ type: "answer", answer, target_id: message.sender_id, sender_id: clientId }));
+                    // NEW: Piggyback our Gmail name onto the Answer
+                    ws.send(JSON.stringify({ type: "answer", answer, target_id: message.sender_id, sender_id: clientId, sender_name: myName }));
                 }
                 else if (message.type === "answer") {
+                    // NEW: We received an answer! Save their real name.
+                    peerNamesRef.current[message.sender_id] = message.sender_name || "Guest";
+                    updatePeerNameState(message.sender_id, message.sender_name);
+
                     const pc = peersRef.current[message.sender_id];
                     if (pc) await pc.setRemoteDescription(new RTCSessionDescription(message.answer));
                 }
@@ -107,6 +132,7 @@ export default function Room() {
                     if (peersRef.current[disconnectedId]) {
                         peersRef.current[disconnectedId].close();
                         delete peersRef.current[disconnectedId];
+                        delete peerNamesRef.current[disconnectedId]; // Clean up memory
                     }
                     setRemotePeers((prev) => prev.filter(peer => peer.peerId !== disconnectedId));
                 }
@@ -139,13 +165,18 @@ export default function Room() {
             setRemotePeers((prevPeers) => {
                 const existingPeer = prevPeers.find(p => p.peerId === peerId);
                 if (existingPeer) return prevPeers;
-                return [...prevPeers, { peerId: peerId, stream: event.streams[0] }];
+                // Attach the real name to the video feed!
+                return [...prevPeers, { peerId: peerId, stream: event.streams[0], peerName: peerNamesRef.current[peerId] || "Connecting..." }];
             });
         };
         return pc;
     };
 
-    // --- UI CONTROLS ---
+    // Helper function to update the screen if the name arrives slightly after the video stream
+    const updatePeerNameState = (id, newName) => {
+        setRemotePeers((prev) => prev.map(p => p.peerId === id ? { ...p, peerName: newName } : p));
+    };
+
     const toggleAudio = () => {
         if (localStream) {
             const track = localStream.getAudioTracks()[0];
@@ -162,70 +193,138 @@ export default function Room() {
         }
     };
 
-    const copyInviteLink = () => {
-        navigator.clipboard.writeText(window.location.href);
-        alert("Invite link copied to clipboard!");
+    const copyMeetingDetails = () => {
+        const inviteText = `Join my Zoom Clone Meeting!\n\nRoom ID: ${id}\nPasscode: ${activePassword}\n\nOne-Click Join Link:\n${window.location.href}`;
+        navigator.clipboard.writeText(inviteText);
+        alert("Meeting details copied to clipboard!");
+        setShowShareModal(false);
     };
 
     const leaveRoom = () => navigate("/");
 
-    // --- RENDER LOCK SCREEN IF NOT AUTHORIZED ---
-    if (!isAuthorized) {
+    // --- RENDER LOADING SCREEN ---
+    if (isValidating) {
         return (
-            <div style={{ marginTop: '10vh' }}>
-                <h2>Meeting is Locked</h2>
-                <p style={{ color: 'red' }}>{authError}</p>
-                <input
-                    type="text"
-                    placeholder="Enter Password"
-                    value={manualPassword}
-                    onChange={(e) => setManualPassword(e.target.value)}
-                    style={{ padding: '10px', fontSize: '16px', marginRight: '10px' }}
-                />
-                <button
-                    onClick={() => validatePassword(manualPassword)}
-                    style={{ padding: '12px 24px', backgroundColor: '#2D8CFF', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}
-                >
-                    Unlock & Join
-                </button>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111', color: 'white' }}>
+                <div style={{ fontSize: '40px', marginBottom: '20px', animation: 'spin 2s linear infinite' }}>⏳</div>
+                <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+                <h2 style={{ fontWeight: 'normal' }}>Joining meeting...</h2>
+                <p style={{ color: '#888' }}>Authenticating secure connection</p>
             </div>
         );
     }
 
-    // --- RENDER VIDEO ROOM IF AUTHORIZED ---
-    return (
-        <div style={{ padding: '2rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <h2>Meeting Room: {id}</h2>
+    // --- RENDER LOCK SCREEN ---
+    if (!isAuthorized) {
+        return (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111' }}>
+                <div style={{ backgroundColor: '#1c1c1c', padding: '3rem', borderRadius: '12px', boxShadow: '0 8px 24px rgba(0,0,0,0.5)', textAlign: 'center', color: 'white', maxWidth: '400px', width: '90%' }}>
+                    <h2 style={{ margin: '0 0 1rem 0' }}>🔒 Meeting Locked</h2>
+                    <p style={{ color: '#ff4d4f', margin: '0 0 1.5rem 0', minHeight: '20px' }}>{authError}</p>
+                    <input
+                        type="password"
+                        placeholder="Enter Meeting Passcode"
+                        value={manualPassword}
+                        onChange={(e) => setManualPassword(e.target.value)}
+                        style={{ width: '100%', padding: '12px', fontSize: '16px', borderRadius: '6px', border: '1px solid #444', backgroundColor: '#2a2a2a', color: 'white', marginBottom: '1.5rem', boxSizing: 'border-box' }}
+                    />
+                    <button
+                        onClick={() => validatePassword(manualPassword)}
+                        style={{ width: '100%', padding: '14px', backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}
+                    >
+                        Join Meeting
+                    </button>
+                </div>
+            </div>
+        );
+    }
 
-            {/* Top Action Bar */}
-            <div style={{ marginBottom: '20px' }}>
-                <button onClick={copyInviteLink} style={{ padding: '8px 16px', backgroundColor: '#e2e8f0', color: '#333', border: '1px solid #cbd5e1', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    🔗 Copy Invite Link
-                </button>
+    // --- RENDER VIDEO ROOM ---
+    return (
+        <div style={{ backgroundColor: '#111', minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
+
+            {/* Dark Mode Modal */}
+            {showShareModal && (
+                <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+                    <div style={{ backgroundColor: '#222', padding: '2rem', borderRadius: '12px', maxWidth: '400px', width: '90%', textAlign: 'left', border: '1px solid #333' }}>
+                        <h3 style={{ marginTop: 0, borderBottom: '1px solid #444', paddingBottom: '10px', color: '#fff' }}>Meeting Information</h3>
+                        <div style={{ margin: '15px 0', fontSize: '16px', color: '#ccc' }}>
+                            <p><strong>Room ID:</strong> <span style={{ fontFamily: 'monospace', backgroundColor: '#111', padding: '4px 8px', borderRadius: '4px', color: '#4ade80' }}>{id}</span></p>
+                            <p><strong>Passcode:</strong> <span style={{ fontFamily: 'monospace', backgroundColor: '#111', padding: '4px 8px', borderRadius: '4px', color: '#4ade80' }}>{activePassword}</span></p>
+                        </div>
+                        <p style={{ fontSize: '14px', color: '#888', wordBreak: 'break-all', marginBottom: '20px' }}>
+                            <strong>Direct Link:</strong><br /> <span style={{ color: '#60a5fa' }}>{window.location.href}</span>
+                        </p>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button onClick={copyMeetingDetails} style={{ flex: 1, padding: '12px', backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Copy Invite</button>
+                            <button onClick={() => setShowShareModal(false)} style={{ flex: 1, padding: '12px', backgroundColor: '#333', color: '#fff', border: '1px solid #555', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Close</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Top Header Bar */}
+            <div style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1a1a1a', borderBottom: '1px solid #2a2a2a' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    <button onClick={() => setShowShareModal(true)} style={{ background: 'none', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '18px', padding: '0' }} title="Meeting Info">
+                        🛡️
+                    </button>
+                    <span style={{ fontWeight: 'bold', letterSpacing: '1px' }}>Zoom Clone</span>
+                </div>
+                <div style={{ backgroundColor: '#dc3545', color: 'white', padding: '4px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>
+                    REC
+                </div>
             </div>
 
-            {/* Video Grid */}
-            <div style={{ display: 'flex', justifyContent: 'center', flexWrap: 'wrap', gap: '20px', maxWidth: '1000px' }}>
-                <div style={{ backgroundColor: '#000', borderRadius: '8px', overflow: 'hidden', position: 'relative', width: '300px', height: '225px' }}>
+            {/* Center Video Grid Area */}
+            <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
+
+                {/* Local Video */}
+                <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
                     <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
-                    <p style={{ position: 'absolute', bottom: '10px', left: '10px', color: 'white', backgroundColor: 'rgba(0,0,0,0.5)', margin: 0, padding: '5px 10px', borderRadius: '4px', fontSize: '14px' }}>You</p>
+                    <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
+                        {/* NEW: Displays your actual Google name locally */}
+                        {myName} {isAudioEnabled ? "" : "🔇"}
+                    </div>
                 </div>
+
+                {/* Remote Videos */}
                 {remotePeers.map((peer) => (
-                    <RemoteVideo key={peer.peerId} stream={peer.stream} peerId={peer.peerId} />
+                    /* NEW: Passes the authenticated Gmail name to the video component */
+                    <RemoteVideo key={peer.peerId} stream={peer.stream} peerName={peer.peerName} />
                 ))}
             </div>
 
-            {/* Controls */}
-            <div style={{ display: 'flex', gap: '15px', marginTop: '20px', padding: '15px', backgroundColor: '#f1f1f1', borderRadius: '10px' }}>
-                <button onClick={toggleAudio} style={{ padding: '10px 20px', backgroundColor: isAudioEnabled ? '#fff' : '#ff4d4f', color: isAudioEnabled ? '#333' : '#fff', border: '1px solid #ccc', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    {isAudioEnabled ? "Mute Mic" : "Unmute Mic"}
+            {/* Bottom Control Bar */}
+            <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
+
+                <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
+                    <div style={{ fontSize: '24px', backgroundColor: isAudioEnabled ? '#333' : 'rgba(255, 77, 79, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {isAudioEnabled ? "🎤" : "🔇"}
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isAudioEnabled ? "Mute" : "Unmute"}</span>
                 </button>
-                <button onClick={toggleVideo} style={{ padding: '10px 20px', backgroundColor: isVideoEnabled ? '#fff' : '#ff4d4f', color: isVideoEnabled ? '#333' : '#fff', border: '1px solid #ccc', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    {isVideoEnabled ? "Stop Video" : "Start Video"}
+
+                <button onClick={toggleVideo} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isVideoEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
+                    <div style={{ fontSize: '24px', backgroundColor: isVideoEnabled ? '#333' : 'rgba(255, 77, 79, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        {isVideoEnabled ? "📷" : "🚫"}
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isVideoEnabled ? "Stop" : "Start"}</span>
                 </button>
-                <button onClick={leaveRoom} style={{ padding: '10px 20px', backgroundColor: '#ff4d4f', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>
-                    Leave Meeting
+
+                <button onClick={() => setShowShareModal(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', width: '60px' }}>
+                    <div style={{ fontSize: '24px', backgroundColor: 'rgba(74, 222, 128, 0.1)', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        👥
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>Invite</span>
                 </button>
+
+                <button onClick={leaveRoom} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#ff4d4f', cursor: 'pointer', marginLeft: 'auto' }}>
+                    <div style={{ fontSize: '16px', backgroundColor: '#ff4d4f', color: 'white', padding: '12px 24px', borderRadius: '8px', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', height: '50px' }}>
+                        End
+                    </div>
+                </button>
+
             </div>
         </div>
     );
