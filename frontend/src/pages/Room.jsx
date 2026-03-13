@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-// NEW: Import the Clerk hook to get secure user data
 import { useUser } from "@clerk/clerk-react";
 
 // --- REMOTE VIDEO COMPONENT ---
@@ -13,7 +12,7 @@ const RemoteVideo = ({ stream, peerName }) => {
         <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid #333' }}>
             <video playsInline autoPlay ref={videoRef} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
-                {peerName} {/* NEW: Render the actual Gmail name here */}
+                {peerName}
             </div>
         </div>
     );
@@ -25,7 +24,6 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
-    // NEW: Securely pull the user's identity from Clerk (Google Auth)
     const { user } = useUser();
     const myName = user?.fullName || user?.firstName || "Guest User";
 
@@ -38,14 +36,16 @@ export default function Room() {
     const [authError, setAuthError] = useState("");
     const [showShareModal, setShowShareModal] = useState(false);
 
+    // NEW: Screen sharing state and reference
+    const [isScreenSharing, setIsScreenSharing] = useState(false);
+    const screenStreamRef = useRef(null);
+
     const activePassword = urlPassword || manualPassword;
 
     const clientId = useRef(Math.random().toString(36).substring(2, 10)).current;
     const userVideoRef = useRef(null);
     const wsRef = useRef(null);
     const peersRef = useRef({});
-
-    // NEW: A memory store to keep track of which ID belongs to which Gmail Name
     const peerNamesRef = useRef({});
 
     const [localStream, setLocalStream] = useState(null);
@@ -54,9 +54,7 @@ export default function Room() {
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
 
     useEffect(() => {
-        if (urlPassword) {
-            validatePassword(urlPassword);
-        }
+        if (urlPassword) validatePassword(urlPassword);
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const validatePassword = async (passwordToCheck) => {
@@ -99,12 +97,10 @@ export default function Room() {
                         const pc = createPeerConnection(peerId, stream, ws);
                         const offer = await pc.createOffer();
                         await pc.setLocalDescription(offer);
-                        // NEW: Piggyback our Gmail name onto the Offer
                         ws.send(JSON.stringify({ type: "offer", offer, target_id: peerId, sender_id: clientId, sender_name: myName }));
                     });
                 }
                 else if (message.type === "offer") {
-                    // NEW: We received an offer! Save their real name.
                     peerNamesRef.current[message.sender_id] = message.sender_name || "Guest";
                     updatePeerNameState(message.sender_id, message.sender_name);
 
@@ -112,11 +108,9 @@ export default function Room() {
                     await pc.setRemoteDescription(new RTCSessionDescription(message.offer));
                     const answer = await pc.createAnswer();
                     await pc.setLocalDescription(answer);
-                    // NEW: Piggyback our Gmail name onto the Answer
                     ws.send(JSON.stringify({ type: "answer", answer, target_id: message.sender_id, sender_id: clientId, sender_name: myName }));
                 }
                 else if (message.type === "answer") {
-                    // NEW: We received an answer! Save their real name.
                     peerNamesRef.current[message.sender_id] = message.sender_name || "Guest";
                     updatePeerNameState(message.sender_id, message.sender_name);
 
@@ -132,7 +126,7 @@ export default function Room() {
                     if (peersRef.current[disconnectedId]) {
                         peersRef.current[disconnectedId].close();
                         delete peersRef.current[disconnectedId];
-                        delete peerNamesRef.current[disconnectedId]; // Clean up memory
+                        delete peerNamesRef.current[disconnectedId];
                     }
                     setRemotePeers((prev) => prev.filter(peer => peer.peerId !== disconnectedId));
                 }
@@ -145,6 +139,7 @@ export default function Room() {
     useEffect(() => {
         return () => {
             if (localStream) localStream.getTracks().forEach(track => track.stop());
+            if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(track => track.stop());
             Object.values(peersRef.current).forEach(pc => pc.close());
             if (wsRef.current) wsRef.current.close();
         };
@@ -165,14 +160,12 @@ export default function Room() {
             setRemotePeers((prevPeers) => {
                 const existingPeer = prevPeers.find(p => p.peerId === peerId);
                 if (existingPeer) return prevPeers;
-                // Attach the real name to the video feed!
                 return [...prevPeers, { peerId: peerId, stream: event.streams[0], peerName: peerNamesRef.current[peerId] || "Connecting..." }];
             });
         };
         return pc;
     };
 
-    // Helper function to update the screen if the name arrives slightly after the video stream
     const updatePeerNameState = (id, newName) => {
         setRemotePeers((prev) => prev.map(p => p.peerId === id ? { ...p, peerName: newName } : p));
     };
@@ -193,6 +186,56 @@ export default function Room() {
         }
     };
 
+    // --- NEW: Mesh Network Screen Share Logic ---
+    const toggleScreenShare = async () => {
+        if (!isScreenSharing) {
+            try {
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                const screenVideoTrack = screenStream.getVideoTracks()[0];
+
+                // Loop through ALL peers in the mesh network and swap their video track
+                Object.values(peersRef.current).forEach(pc => {
+                    const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+                    if (sender) sender.replaceTrack(screenVideoTrack);
+                });
+
+                // Update local UI
+                if (userVideoRef.current) userVideoRef.current.srcObject = screenStream;
+                screenStreamRef.current = screenStream;
+                setIsScreenSharing(true);
+
+                // Listen for the native browser "Stop sharing" popup button
+                screenVideoTrack.onended = () => {
+                    stopScreenSharing();
+                };
+            } catch (error) {
+                console.error("Error sharing screen:", error);
+            }
+        } else {
+            stopScreenSharing();
+        }
+    };
+
+    const stopScreenSharing = () => {
+        if (localStream && peersRef.current) {
+            const webcamTrack = localStream.getVideoTracks()[0];
+
+            // Revert track for ALL peers back to the webcam
+            Object.values(peersRef.current).forEach(pc => {
+                const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+                if (sender && webcamTrack) sender.replaceTrack(webcamTrack);
+            });
+
+            // Revert local UI
+            if (userVideoRef.current) userVideoRef.current.srcObject = localStream;
+            if (screenStreamRef.current) {
+                screenStreamRef.current.getTracks().forEach(track => track.stop());
+                screenStreamRef.current = null;
+            }
+            setIsScreenSharing(false);
+        }
+    };
+
     const copyMeetingDetails = () => {
         const inviteText = `Join my Zoom Clone Meeting!\n\nRoom ID: ${id}\nPasscode: ${activePassword}\n\nOne-Click Join Link:\n${window.location.href}`;
         navigator.clipboard.writeText(inviteText);
@@ -202,7 +245,6 @@ export default function Room() {
 
     const leaveRoom = () => navigate("/");
 
-    // --- RENDER LOADING SCREEN ---
     if (isValidating) {
         return (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111', color: 'white' }}>
@@ -214,7 +256,6 @@ export default function Room() {
         );
     }
 
-    // --- RENDER LOCK SCREEN ---
     if (!isAuthorized) {
         return (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', backgroundColor: '#111' }}>
@@ -239,11 +280,10 @@ export default function Room() {
         );
     }
 
-    // --- RENDER VIDEO ROOM ---
     return (
         <div style={{ backgroundColor: '#111', minHeight: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
 
-            {/* Dark Mode Modal */}
+            {/* Share Modal */}
             {showShareModal && (
                 <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
                     <div style={{ backgroundColor: '#222', padding: '2rem', borderRadius: '12px', maxWidth: '400px', width: '90%', textAlign: 'left', border: '1px solid #333' }}>
@@ -263,7 +303,7 @@ export default function Room() {
                 </div>
             )}
 
-            {/* Top Header Bar */}
+            {/* Header */}
             <div style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1a1a1a', borderBottom: '1px solid #2a2a2a' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <button onClick={() => setShowShareModal(true)} style={{ background: 'none', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '18px', padding: '0' }} title="Meeting Info">
@@ -276,26 +316,25 @@ export default function Room() {
                 </div>
             </div>
 
-            {/* Center Video Grid Area */}
+            {/* Video Grid Area */}
             <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
 
                 {/* Local Video */}
                 <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
-                    <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} />
+                    {/* Automatically remove the mirror effect if you are presenting so text is readable! */}
+                    <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }} />
                     <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
-                        {/* NEW: Displays your actual Google name locally */}
-                        {myName} {isAudioEnabled ? "" : "🔇"}
+                        {myName} {isScreenSharing ? "(Presenting)" : ""} {isAudioEnabled ? "" : "🔇"}
                     </div>
                 </div>
 
                 {/* Remote Videos */}
                 {remotePeers.map((peer) => (
-                    /* NEW: Passes the authenticated Gmail name to the video component */
                     <RemoteVideo key={peer.peerId} stream={peer.stream} peerName={peer.peerName} />
                 ))}
             </div>
 
-            {/* Bottom Control Bar */}
+            {/* Control Bar */}
             <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
 
                 <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
@@ -310,6 +349,14 @@ export default function Room() {
                         {isVideoEnabled ? "📷" : "🚫"}
                     </div>
                     <span style={{ fontSize: '12px', fontWeight: '500' }}>{isVideoEnabled ? "Stop" : "Start"}</span>
+                </button>
+
+                {/* NEW: Screen Share Button */}
+                <button onClick={toggleScreenShare} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isScreenSharing ? '#4ade80' : 'white', cursor: 'pointer', width: '60px' }}>
+                    <div style={{ fontSize: '24px', backgroundColor: isScreenSharing ? 'rgba(74, 222, 128, 0.1)' : '#333', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        💻
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>{isScreenSharing ? "Sharing" : "Share"}</span>
                 </button>
 
                 <button onClick={() => setShowShareModal(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', width: '60px' }}>
