@@ -48,6 +48,9 @@ export default function Room() {
     const peerNamesRef = useRef({});
 
     const [localStream, setLocalStream] = useState(null);
+    // NEW: A Ref to hold the stream so our cleanup functions can always find it
+    const localStreamRef = useRef(null);
+
     const [remotePeers, setRemotePeers] = useState([]);
     const [isAudioEnabled, setIsAudioEnabled] = useState(true);
     const [isVideoEnabled, setIsVideoEnabled] = useState(true);
@@ -82,7 +85,11 @@ export default function Room() {
         let stream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
             setLocalStream(stream);
+            // NEW: Save it to the ref immediately
+            localStreamRef.current = stream;
+
             if (userVideoRef.current) userVideoRef.current.srcObject = stream;
 
             const ws = new WebSocket(`${WS_URL}/ws/${id}/${clientId}`);
@@ -135,9 +142,10 @@ export default function Room() {
         }
     };
 
+    // NEW: Updated cleanup to use the localStreamRef so it accurately kills the hardware
     useEffect(() => {
         return () => {
-            if (localStream) localStream.getTracks().forEach(track => track.stop());
+            if (localStreamRef.current) localStreamRef.current.getTracks().forEach(track => track.stop());
             if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(track => track.stop());
             Object.values(peersRef.current).forEach(pc => pc.close());
             if (wsRef.current) wsRef.current.close();
@@ -242,9 +250,26 @@ export default function Room() {
         setShowShareModal(false);
     };
 
-    const leaveRoom = () => navigate("/");
+    // --- NEW: A vastly improved leaveRoom function ---
+    const leaveRoom = () => {
+        // 1. Forcefully stop the webcam and microphone hardware
+        if (localStreamRef.current) {
+            localStreamRef.current.getTracks().forEach(track => track.stop());
+        }
+        // 2. Forcefully stop screen sharing if it is active
+        if (screenStreamRef.current) {
+            screenStreamRef.current.getTracks().forEach(track => track.stop());
+        }
+        // 3. Close all peer connections
+        Object.values(peersRef.current).forEach(pc => pc.close());
+        // 4. Disconnect from the Python server
+        if (wsRef.current) {
+            wsRef.current.close();
+        }
+        // 5. Finally, navigate back to the home dashboard
+        navigate("/");
+    };
 
-    // --- 1. FIXED FULL-SCREEN LOADING ---
     if (isValidating) {
         return (
             <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: 'white', zIndex: 9999 }}>
@@ -256,7 +281,6 @@ export default function Room() {
         );
     }
 
-    // --- 2. FIXED FULL-SCREEN LOCK SCREEN ---
     if (!isAuthorized) {
         return (
             <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', zIndex: 9999 }}>
@@ -281,7 +305,6 @@ export default function Room() {
         );
     }
 
-    // --- 3. FIXED FULL-SCREEN VIDEO ROOM ---
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', backgroundColor: '#111', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
 
@@ -305,7 +328,7 @@ export default function Room() {
                 </div>
             )}
 
-            {/* Header - Fixed Height */}
+            {/* Header */}
             <div style={{ padding: '15px 20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#1a1a1a', borderBottom: '1px solid #2a2a2a' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <button onClick={() => setShowShareModal(true)} style={{ background: 'none', border: 'none', color: '#2ecc71', cursor: 'pointer', fontSize: '18px', padding: '0' }} title="Meeting Info">
@@ -318,7 +341,7 @@ export default function Room() {
                 </div>
             </div>
 
-            {/* Center Video Grid Area - Flex 1 allows ONLY this area to stretch and scroll */}
+            {/* Video Grid Area */}
             <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
 
                 {/* Local Video */}
@@ -335,7 +358,7 @@ export default function Room() {
                 ))}
             </div>
 
-            {/* Bottom Control Bar - Fixed Height */}
+            {/* Bottom Control Bar */}
             <div style={{ backgroundColor: '#1a1a1a', padding: '15px 20px', display: 'flex', justifyContent: 'center', gap: '20px', borderTop: '1px solid #2a2a2a' }}>
 
                 <button onClick={toggleAudio} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isAudioEnabled ? 'white' : '#ff4d4f', cursor: 'pointer', width: '60px' }}>
