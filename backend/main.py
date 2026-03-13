@@ -10,24 +10,20 @@ load_dotenv()
 
 app = FastAPI()
 
-# 1. Add CORS so React (port 5173) can talk to FastAPI (port 8000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # In production, change this to your Vercel domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. In-memory database for room passwords
-room_passwords = {} # Format: { "room_123": "mysecretpassword" }
+room_passwords = {}
 
-# Data models for our REST API
 class RoomAuth(BaseModel):
     room_id: str
     password: str
 
-# 3. REST Endpoint: Create a room password
 @app.post("/create-room")
 def create_room(data: RoomAuth):
     if data.room_id in room_passwords:
@@ -35,7 +31,6 @@ def create_room(data: RoomAuth):
     room_passwords[data.room_id] = data.password
     return {"message": "Room secured"}
 
-# 4. REST Endpoint: Validate a room password
 @app.post("/validate-room")
 def validate_room(data: RoomAuth):
     if data.room_id not in room_passwords:
@@ -43,8 +38,6 @@ def validate_room(data: RoomAuth):
     if room_passwords[data.room_id] != data.password:
         raise HTTPException(status_code=401, detail="Invalid password")
     return {"message": "Access granted"}
-
-# --- Existing WebSocket Mesh Network Code Below ---
 
 class ConnectionManager:
     def __init__(self):
@@ -72,7 +65,6 @@ class ConnectionManager:
                 asyncio.create_task(ws.send_text(json.dumps({"type": "user-disconnected", "caller_id": client_id})))
             if not self.rooms[room_id]:
                 del self.rooms[room_id]
-                # Optional: clean up the password when the room is empty
                 if room_id in room_passwords:
                     del room_passwords[room_id]
             print(f"User {client_id} disconnected from room: {room_id}")
@@ -81,6 +73,13 @@ class ConnectionManager:
         if room_id in self.rooms and target_client_id in self.rooms[room_id]:
             target_ws = self.rooms[room_id][target_client_id]
             await target_ws.send_text(message)
+
+    # --- NEW: Broadcast function for the chat! ---
+    async def broadcast(self, message: str, room_id: str, sender_client_id: str):
+        if room_id in self.rooms:
+            for cid, ws in self.rooms[room_id].items():
+                if cid != sender_client_id:
+                    await ws.send_text(message)
 
 manager = ConnectionManager()
 
@@ -91,7 +90,13 @@ async def websocket_endpoint(websocket: WebSocket, room_id: str, client_id: str)
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
+            
+            # If it has a target_id, route it privately (WebRTC video signaling)
             if "target_id" in message:
                 await manager.send_personal_message(data, room_id, message["target_id"])
+            # NEW: If it does NOT have a target, broadcast it to the whole room (Text Chat)
+            else:
+                await manager.broadcast(data, room_id, client_id)
+                
     except WebSocketDisconnect:
         manager.disconnect(websocket, room_id, client_id)
