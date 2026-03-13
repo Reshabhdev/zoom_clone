@@ -378,6 +378,10 @@ export default function Room() {
                         <div style={{ margin: '15px 0', fontSize: '16px', color: '#ccc' }}>
                             <p><strong>Room ID:</strong> <span style={{ fontFamily: 'monospace', backgroundColor: '#111', padding: '4px 8px', borderRadius: '4px', color: '#4ade80' }}>{id}</span></p>
                             <p><strong>Passcode:</strong> <span style={{ fontFamily: 'monospace', backgroundColor: '#111', padding: '4px 8px', borderRadius: '4px', color: '#4ade80' }}>{activePassword}</span></p>
+                            <p style={{ fontSize: '14px', wordBreak: 'break-all', marginTop: '15px' }}>
+                                <strong>Direct Link:</strong><br />
+                                <span style={{ color: '#60a5fa' }}>{window.location.href}</span>
+                            </p>
                         </div>
                         <div style={{ display: 'flex', gap: '10px' }}>
                             <button onClick={copyMeetingDetails} style={{ flex: 1, padding: '12px', backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold' }}>Copy Invite</button>

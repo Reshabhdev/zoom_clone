@@ -1,5 +1,28 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
+
+// Helper function to generate an 8-character password with letters, numbers, and symbols
+const generateSecurePassword = () => {
+    const letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const numbers = "0123456789";
+    const symbols = "!@#$%^&*()_+~`|}{[]:;?><,./-=";
+
+    // Pick at least one of each required type
+    let pwd = "";
+    pwd += letters[Math.floor(Math.random() * letters.length)];
+    pwd += numbers[Math.floor(Math.random() * numbers.length)];
+    pwd += symbols[Math.floor(Math.random() * symbols.length)];
+
+    // Fill the rest (5 characters)
+    const allChars = letters + numbers + symbols;
+    for (let i = 0; i < 5; i++) {
+        pwd += allChars[Math.floor(Math.random() * allChars.length)];
+    }
+
+    // Shuffle it so the structured first three characters aren't always at the start
+    pwd = pwd.split("").sort(() => 0.5 - Math.random()).join("");
+    return pwd;
+};
 
 export default function Home() {
     const [createPwd, setCreatePwd] = useState("");
@@ -7,10 +30,24 @@ export default function Home() {
     const [joinPwd, setJoinPwd] = useState("");
     const navigate = useNavigate();
 
+    // Auto-generate a secure password on component mount
+    useEffect(() => {
+        setCreatePwd(generateSecurePassword());
+    }, []);
+
     const BACKEND_URL = "https://zoom-clone-g1m4.onrender.com";
 
     const createMeeting = async () => {
-        if (!createPwd.trim()) return alert("Please set a room passcode!");
+        const pwd = createPwd.trim();
+        if (!pwd) return alert("Please set a room passcode!");
+
+        // Validation: must be at least 8 chars, contain a number, and contain a symbol
+        const hasNumber = /\d/;
+        const hasSymbol = /[!@#$%^&*()_+~`|}{[\]:;?><,./-=]/;
+        if (pwd.length < 8 || !hasNumber.test(pwd) || !hasSymbol.test(pwd)) {
+            return alert("Passcode must be at least 8 characters long and contain at least one number and one symbol.");
+        }
+
         const newRoomId = Math.random().toString(36).substring(2, 8);
         try {
             const response = await fetch(`${BACKEND_URL}/create-room`, {
