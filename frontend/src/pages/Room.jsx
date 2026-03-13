@@ -24,6 +24,7 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
+    // Securely pull the user's identity from Clerk (Google Auth)
     const { user } = useUser();
     const myName = user?.fullName || user?.firstName || "Guest User";
 
@@ -36,7 +37,7 @@ export default function Room() {
     const [authError, setAuthError] = useState("");
     const [showShareModal, setShowShareModal] = useState(false);
 
-    // NEW: Screen sharing state and reference
+    // Screen sharing state
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const screenStreamRef = useRef(null);
 
@@ -186,14 +187,20 @@ export default function Room() {
         }
     };
 
-    // --- NEW: Mesh Network Screen Share Logic ---
+    // --- Mesh Network Screen Share Logic with Mobile Checking ---
     const toggleScreenShare = async () => {
         if (!isScreenSharing) {
             try {
+                // 1. Check if the browser supports screen sharing
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+                    alert("Screen sharing is not supported on this browser or mobile device.");
+                    return;
+                }
+
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const screenVideoTrack = screenStream.getVideoTracks()[0];
 
-                // Loop through ALL peers in the mesh network and swap their video track
+                // Loop through ALL peers and swap their video track
                 Object.values(peersRef.current).forEach(pc => {
                     const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
                     if (sender) sender.replaceTrack(screenVideoTrack);
@@ -210,6 +217,8 @@ export default function Room() {
                 };
             } catch (error) {
                 console.error("Error sharing screen:", error);
+                // 2. Alert the user if they cancel or if the OS blocks the request
+                alert("Could not share screen. It may be blocked by your device.");
             }
         } else {
             stopScreenSharing();
@@ -321,7 +330,6 @@ export default function Room() {
 
                 {/* Local Video */}
                 <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
-                    {/* Automatically remove the mirror effect if you are presenting so text is readable! */}
                     <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }} />
                     <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
                         {myName} {isScreenSharing ? "(Presenting)" : ""} {isAudioEnabled ? "" : "🔇"}
@@ -351,7 +359,6 @@ export default function Room() {
                     <span style={{ fontSize: '12px', fontWeight: '500' }}>{isVideoEnabled ? "Stop" : "Start"}</span>
                 </button>
 
-                {/* NEW: Screen Share Button */}
                 <button onClick={toggleScreenShare} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isScreenSharing ? '#4ade80' : 'white', cursor: 'pointer', width: '60px' }}>
                     <div style={{ fontSize: '24px', backgroundColor: isScreenSharing ? 'rgba(74, 222, 128, 0.1)' : '#333', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         💻
