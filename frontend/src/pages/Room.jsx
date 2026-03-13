@@ -24,6 +24,7 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
+    // Securely pull the user's identity from Clerk (Google Auth)
     const { user } = useUser();
     const myName = user?.fullName || user?.firstName || "Guest User";
 
@@ -39,6 +40,12 @@ export default function Room() {
     const [isScreenSharing, setIsScreenSharing] = useState(false);
     const screenStreamRef = useRef(null);
 
+    // --- Chat States ---
+    const [isChatOpen, setIsChatOpen] = useState(false);
+    const [chatMessage, setChatMessage] = useState("");
+    const [messages, setMessages] = useState([]);
+    const chatScrollRef = useRef(null);
+
     const activePassword = urlPassword || manualPassword;
 
     const clientId = useRef(Math.random().toString(36).substring(2, 10)).current;
@@ -48,7 +55,6 @@ export default function Room() {
     const peerNamesRef = useRef({});
 
     const [localStream, setLocalStream] = useState(null);
-    // NEW: A Ref to hold the stream so our cleanup functions can always find it
     const localStreamRef = useRef(null);
 
     const [remotePeers, setRemotePeers] = useState([]);
@@ -58,6 +64,13 @@ export default function Room() {
     useEffect(() => {
         if (urlPassword) validatePassword(urlPassword);
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Auto-scroll chat to bottom
+    useEffect(() => {
+        if (chatScrollRef.current) {
+            chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight;
+        }
+    }, [messages, isChatOpen]);
 
     const validatePassword = async (passwordToCheck) => {
         setIsValidating(true);
@@ -85,11 +98,8 @@ export default function Room() {
         let stream;
         try {
             stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-
             setLocalStream(stream);
-            // NEW: Save it to the ref immediately
             localStreamRef.current = stream;
-
             if (userVideoRef.current) userVideoRef.current.srcObject = stream;
 
             const ws = new WebSocket(`${WS_URL}/ws/${id}/${clientId}`);
@@ -98,7 +108,15 @@ export default function Room() {
             ws.onmessage = async (event) => {
                 const message = JSON.parse(event.data);
 
-                if (message.type === "all-users") {
+                if (message.type === "chat") {
+                    setMessages((prev) => [...prev, {
+                        sender: message.sender_name,
+                        text: message.text,
+                        time: message.time,
+                        isMe: false
+                    }]);
+                }
+                else if (message.type === "all-users") {
                     message.users.forEach(async (peerId) => {
                         const pc = createPeerConnection(peerId, stream, ws);
                         const offer = await pc.createOffer();
@@ -142,7 +160,6 @@ export default function Room() {
         }
     };
 
-    // NEW: Updated cleanup to use the localStreamRef so it accurately kills the hardware
     useEffect(() => {
         return () => {
             if (localStreamRef.current) localStreamRef.current.getTracks().forEach(track => track.stop());
@@ -213,9 +230,7 @@ export default function Room() {
                 screenStreamRef.current = screenStream;
                 setIsScreenSharing(true);
 
-                screenVideoTrack.onended = () => {
-                    stopScreenSharing();
-                };
+                screenVideoTrack.onended = () => { stopScreenSharing(); };
             } catch (error) {
                 console.error("Error sharing screen:", error);
                 alert("Could not share screen. It may be blocked by your device.");
@@ -228,12 +243,10 @@ export default function Room() {
     const stopScreenSharing = () => {
         if (localStream && peersRef.current) {
             const webcamTrack = localStream.getVideoTracks()[0];
-
             Object.values(peersRef.current).forEach(pc => {
                 const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
                 if (sender && webcamTrack) sender.replaceTrack(webcamTrack);
             });
-
             if (userVideoRef.current) userVideoRef.current.srcObject = localStream;
             if (screenStreamRef.current) {
                 screenStreamRef.current.getTracks().forEach(track => track.stop());
@@ -250,26 +263,33 @@ export default function Room() {
         setShowShareModal(false);
     };
 
-    // --- NEW: A vastly improved leaveRoom function ---
+    const sendChatMessage = (e) => {
+        e.preventDefault();
+        if (!chatMessage.trim() || !wsRef.current) return;
+
+        const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        const msgPayload = {
+            type: "chat",
+            sender_name: myName,
+            text: chatMessage,
+            time: timeString
+        };
+
+        wsRef.current.send(JSON.stringify(msgPayload));
+        setMessages(prev => [...prev, { ...msgPayload, isMe: true }]);
+        setChatMessage("");
+    };
+
     const leaveRoom = () => {
-        // 1. Forcefully stop the webcam and microphone hardware
-        if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(track => track.stop());
-        }
-        // 2. Forcefully stop screen sharing if it is active
-        if (screenStreamRef.current) {
-            screenStreamRef.current.getTracks().forEach(track => track.stop());
-        }
-        // 3. Close all peer connections
+        if (localStreamRef.current) localStreamRef.current.getTracks().forEach(track => track.stop());
+        if (screenStreamRef.current) screenStreamRef.current.getTracks().forEach(track => track.stop());
         Object.values(peersRef.current).forEach(pc => pc.close());
-        // 4. Disconnect from the Python server
-        if (wsRef.current) {
-            wsRef.current.close();
-        }
-        // 5. Finally, navigate back to the home dashboard
+        if (wsRef.current) wsRef.current.close();
         navigate("/");
     };
 
+    // --- LOADING SCREEN ---
     if (isValidating) {
         return (
             <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', color: 'white', zIndex: 9999 }}>
@@ -281,6 +301,7 @@ export default function Room() {
         );
     }
 
+    // --- LOCK SCREEN ---
     if (!isAuthorized) {
         return (
             <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#111', zIndex: 9999 }}>
@@ -296,15 +317,23 @@ export default function Room() {
                     />
                     <button
                         onClick={() => validatePassword(manualPassword)}
-                        style={{ width: '100%', padding: '14px', backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}
+                        style={{ width: '100%', padding: '14px', backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px', marginBottom: '10px' }}
                     >
                         Join Meeting
+                    </button>
+
+                    <button
+                        onClick={() => navigate("/")}
+                        style={{ width: '100%', padding: '14px', backgroundColor: 'transparent', color: '#888', border: '1px solid #444', borderRadius: '6px', cursor: 'pointer', fontWeight: 'bold', fontSize: '16px' }}
+                    >
+                        Back to Dashboard
                     </button>
                 </div>
             </div>
         );
     }
 
+    // --- VIDEO ROOM ---
     return (
         <div style={{ position: 'fixed', top: 0, left: 0, height: '100vh', width: '100vw', backgroundColor: '#111', display: 'flex', flexDirection: 'column', overflow: 'hidden', color: 'white' }}>
 
@@ -341,21 +370,69 @@ export default function Room() {
                 </div>
             </div>
 
-            {/* Video Grid Area */}
-            <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
+            {/* Middle Layout (Video Left, Chat Right) */}
+            <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
 
-                {/* Local Video */}
-                <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
-                    <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }} />
-                    <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
-                        {myName} {isScreenSharing ? "(Presenting)" : ""} {isAudioEnabled ? "" : "🔇"}
+                {/* Video Grid Area */}
+                <div style={{ flex: 1, padding: '20px', display: 'flex', justifyContent: 'center', alignItems: 'center', flexWrap: 'wrap', gap: '20px', overflowY: 'auto' }}>
+
+                    <div style={{ backgroundColor: '#222', borderRadius: '12px', overflow: 'hidden', position: 'relative', width: '100%', maxWidth: '400px', aspectRatio: '16/9', border: '1px solid #333' }}>
+                        <video playsInline muted autoPlay ref={userVideoRef} style={{ width: '100%', height: '100%', objectFit: 'cover', transform: isScreenSharing ? 'none' : 'scaleX(-1)' }} />
+                        <div style={{ position: 'absolute', bottom: '12px', left: '12px', color: 'white', backgroundColor: 'rgba(0,0,0,0.6)', padding: '6px 12px', borderRadius: '6px', fontSize: '13px', fontWeight: '500', backdropFilter: 'blur(4px)' }}>
+                            {myName} {isScreenSharing ? "(Presenting)" : ""} {isAudioEnabled ? "" : "🔇"}
+                        </div>
                     </div>
+
+                    {remotePeers.map((peer) => (
+                        <RemoteVideo key={peer.peerId} stream={peer.stream} peerName={peer.peerName} />
+                    ))}
                 </div>
 
-                {/* Remote Videos */}
-                {remotePeers.map((peer) => (
-                    <RemoteVideo key={peer.peerId} stream={peer.stream} peerName={peer.peerName} />
-                ))}
+                {/* Chat Sidebar Panel */}
+                {isChatOpen && (
+                    <div style={{ width: '320px', backgroundColor: '#1c1c1c', borderLeft: '1px solid #2a2a2a', display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ padding: '15px', borderBottom: '1px solid #2a2a2a', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <h3 style={{ margin: 0, fontSize: '16px' }}>Meeting Chat</h3>
+                            <button onClick={() => setIsChatOpen(false)} style={{ background: 'none', border: 'none', color: '#888', cursor: 'pointer', fontSize: '16px' }}>✕</button>
+                        </div>
+
+                        <div ref={chatScrollRef} style={{ flex: 1, padding: '15px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                            {messages.length === 0 ? (
+                                <p style={{ textAlign: 'center', color: '#666', fontSize: '14px', marginTop: '50%' }}>No messages yet.<br />Say hello!</p>
+                            ) : (
+                                messages.map((msg, i) => (
+                                    <div key={i} style={{ alignSelf: msg.isMe ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+                                        {!msg.isMe && <div style={{ fontSize: '12px', color: '#888', marginBottom: '4px', paddingLeft: '4px' }}>{msg.sender}</div>}
+                                        <div style={{
+                                            backgroundColor: msg.isMe ? '#0b5cff' : '#333',
+                                            color: 'white',
+                                            padding: '10px 14px',
+                                            borderRadius: msg.isMe ? '12px 12px 0 12px' : '12px 12px 12px 0',
+                                            fontSize: '14px',
+                                            wordBreak: 'break-word'
+                                        }}>
+                                            {msg.text}
+                                        </div>
+                                        <div style={{ fontSize: '10px', color: '#666', marginTop: '4px', textAlign: msg.isMe ? 'right' : 'left', padding: '0 4px' }}>{msg.time}</div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+
+                        <form onSubmit={sendChatMessage} style={{ padding: '15px', borderTop: '1px solid #2a2a2a', display: 'flex', gap: '10px' }}>
+                            <input
+                                type="text"
+                                placeholder="Type a message..."
+                                value={chatMessage}
+                                onChange={(e) => setChatMessage(e.target.value)}
+                                style={{ flex: 1, padding: '10px', borderRadius: '8px', border: '1px solid #444', backgroundColor: '#2a2a2a', color: 'white', outline: 'none' }}
+                            />
+                            <button type="submit" style={{ backgroundColor: '#0b5cff', color: 'white', border: 'none', borderRadius: '8px', padding: '0 15px', cursor: 'pointer', fontWeight: 'bold' }}>
+                                Send
+                            </button>
+                        </form>
+                    </div>
+                )}
             </div>
 
             {/* Bottom Control Bar */}
@@ -380,6 +457,13 @@ export default function Room() {
                         💻
                     </div>
                     <span style={{ fontSize: '12px', fontWeight: '500' }}>{isScreenSharing ? "Sharing" : "Share"}</span>
+                </button>
+
+                <button onClick={() => setIsChatOpen(!isChatOpen)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: isChatOpen ? '#0b5cff' : 'white', cursor: 'pointer', width: '60px', position: 'relative' }}>
+                    <div style={{ fontSize: '24px', backgroundColor: isChatOpen ? 'rgba(11, 92, 255, 0.1)' : '#333', padding: '12px', borderRadius: '50%', width: '50px', height: '50px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        💬
+                    </div>
+                    <span style={{ fontSize: '12px', fontWeight: '500' }}>Chat</span>
                 </button>
 
                 <button onClick={() => setShowShareModal(true)} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '5px', background: 'none', border: 'none', color: '#4ade80', cursor: 'pointer', width: '60px' }}>
