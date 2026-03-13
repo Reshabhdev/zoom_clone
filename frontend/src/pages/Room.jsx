@@ -20,7 +20,11 @@ export default function Room() {
     const [searchParams] = useSearchParams();
     const urlPassword = searchParams.get("pwd");
 
-    // NEW: Authorization State
+    // Live Render URLs
+    const REST_URL = "https://zoom-clone-g1m4.onrender.com";
+    const WS_URL = "wss://zoom-clone-g1m4.onrender.com";
+
+    // Authorization State
     const [isAuthorized, setIsAuthorized] = useState(false);
     const [manualPassword, setManualPassword] = useState("");
     const [authError, setAuthError] = useState("");
@@ -40,12 +44,11 @@ export default function Room() {
         if (urlPassword) {
             validatePassword(urlPassword);
         }
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const validatePassword = async (passwordToCheck) => {
-        const serverIP = window.location.hostname;
         try {
-            const response = await fetch(`http://${serverIP}:8000/validate-room`, {
+            const response = await fetch(`${REST_URL}/validate-room`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ room_id: id, password: passwordToCheck })
@@ -62,7 +65,7 @@ export default function Room() {
         }
     };
 
-    // --- 2. WEBRTC LOGIC (Only runs if authorized) ---
+    // --- 2. WEBRTC MESH LOGIC (Runs if authorized) ---
     const startMeeting = async () => {
         let stream;
         try {
@@ -70,8 +73,8 @@ export default function Room() {
             setLocalStream(stream);
             if (userVideoRef.current) userVideoRef.current.srcObject = stream;
 
-            const serverIP = window.location.hostname;
-            const ws = new WebSocket(`ws://${serverIP}:8000/ws/${id}/${clientId}`);
+            // Connect to the Live WebSocket server
+            const ws = new WebSocket(`${WS_URL}/ws/${id}/${clientId}`);
             wsRef.current = ws;
 
             ws.onmessage = async (event) => {
@@ -119,7 +122,7 @@ export default function Room() {
             Object.values(peersRef.current).forEach(pc => pc.close());
             if (wsRef.current) wsRef.current.close();
         };
-    }, []);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const createPeerConnection = (peerId, currentStream, ws) => {
         const pc = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
@@ -160,7 +163,6 @@ export default function Room() {
     };
 
     const copyInviteLink = () => {
-        // Copies the current URL (which includes the ?pwd= parameter) to the clipboard
         navigator.clipboard.writeText(window.location.href);
         alert("Invite link copied to clipboard!");
     };

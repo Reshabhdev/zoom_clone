@@ -7,15 +7,17 @@ export default function Home() {
     const [joinPwd, setJoinPwd] = useState("");
     const navigate = useNavigate();
 
+    // The URL to your live Render backend
+    const BACKEND_URL = "https://zoom-clone-g1m4.onrender.com";
+
     const createMeeting = async () => {
         if (!createPwd.trim()) return alert("Please set a room password!");
 
         const newRoomId = Math.random().toString(36).substring(2, 8);
-        const serverIP = window.location.hostname;
 
         try {
-            // 1. Tell backend to save the password for this room
-            const response = await fetch(`http://${serverIP}:8000/create-room`, {
+            // 1. Tell the live backend to save the password for this room
+            const response = await fetch(`${BACKEND_URL}/create-room`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ room_id: newRoomId, password: createPwd })
@@ -29,7 +31,7 @@ export default function Home() {
             }
         } catch (error) {
             console.error(error);
-            alert("Cannot connect to server.");
+            alert("Cannot connect to server. Make sure your Render backend is live.");
         }
     };
 
